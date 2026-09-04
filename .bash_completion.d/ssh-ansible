@@ -1,0 +1,157 @@
+# Bash completion for ssh using hosts from Ansible inventory.
+#
+# Author:
+#   Steve Maher
+#
+# Uses:
+#   $ANSIBLE_INVENTORY
+#
+# Cache:
+#   ${XDG_CACHE_HOME:-$HOME/.cache}/ssh-ansible-completion/
+#
+# Optional:
+#   SSH_ANSIBLE_CACHE_TTL=300   # cache lifetime in seconds
+
+_ssh_ansible_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ssh-ansible-completion"
+
+_ssh_ansible_inventory_cache_key()
+{
+    local inventory="${ANSIBLE_INVENTORY:-}"
+
+    [[ -n "$inventory" ]] || return 1
+
+    # ANSIBLE_INVENTORY can contain multiple paths, so create a stable
+    # filename from its value.
+    printf '%s' "$inventory" | sha256sum | awk '{print $1}'
+}
+
+_ssh_ansible_inventory_changed()
+{
+    local cache="$1"
+    local inventory="${ANSIBLE_INVENTORY:-}"
+    local path
+
+    [[ -e "$cache" ]] || return 0
+
+    # ANSIBLE_INVENTORY may contain colon-separated inventory sources.
+    # If any local inventory source is newer than our cache, refresh it.
+    while IFS= read -r path; do
+        [[ -e "$path" && "$path" -nt "$cache" ]] && return 0
+    done < <(printf '%s' "$inventory" | tr ':' '\n')
+
+    return 1
+}
+
+_ssh_ansible_cache_expired()
+{
+    local cache="$1"
+    local ttl="${SSH_ANSIBLE_CACHE_TTL:-300}"
+    local now cache_mtime
+
+    [[ -e "$cache" ]] || return 0
+
+    now=$(date +%s)
+    cache_mtime=$(stat -c %Y "$cache" 2>/dev/null) || return 0
+
+    (( now - cache_mtime >= ttl ))
+}
+
+_ssh_ansible_update_cache()
+{
+    local cache="$1"
+    local tmp="${cache}.$$"
+
+    mkdir -p "$_ssh_ansible_cache_dir" || return 1
+
+    # ansible-inventory emits JSON. Python is used rather than trying
+    # to parse JSON with grep/sed.
+    if ansible-inventory --list 2>/dev/null |
+        python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+
+hosts = set()
+
+# The _meta.hostvars object contains all concrete inventory hosts.
+meta = data.get("_meta", {})
+hostvars = meta.get("hostvars", {})
+
+hosts.update(hostvars.keys())
+
+# Some inventory plugins/configurations may not populate hostvars
+# fully, so also inspect group host lists.
+for name, group in data.items():
+    if name == "_meta" or not isinstance(group, dict):
+        continue
+
+    group_hosts = group.get("hosts", [])
+    if isinstance(group_hosts, list):
+        hosts.update(group_hosts)
+
+for host in sorted(hosts):
+    print(host)
+' > "$tmp"
+    then
+        mv "$tmp" "$cache"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+_ssh_ansible_hosts()
+{
+    local key cache
+
+    [[ -n "${ANSIBLE_INVENTORY:-}" ]] || return 0
+
+    key=$(_ssh_ansible_inventory_cache_key) || return
+    cache="$_ssh_ansible_cache_dir/$key.hosts"
+
+    if _ssh_ansible_cache_expired "$cache" ||
+       _ssh_ansible_inventory_changed "$cache"
+    then
+        _ssh_ansible_update_cache "$cache"
+    fi
+
+    [[ -r "$cache" ]] && cat "$cache"
+}
+
+_ssh_ansible_complete()
+{
+    local cur user_prefix hostpart
+    local -a hosts
+
+    cur="${COMP_WORDS[COMP_CWORD]}"
+
+    # Don't try hostname completion for ssh options.
+    [[ "$cur" == -* ]] && return 0
+
+    mapfile -t hosts < <(_ssh_ansible_hosts)
+
+    if [[ "$cur" == *@* ]]; then
+        user_prefix="${cur%@*}@"
+        hostpart="${cur#*@}"
+
+        COMPREPLY=(
+            $(compgen -W "${hosts[*]}" -- "$hostpart")
+        )
+
+        # Put the username back on each result.
+        local i
+        for i in "${!COMPREPLY[@]}"; do
+            COMPREPLY[$i]="${user_prefix}${COMPREPLY[$i]}"
+        done
+    else
+        COMPREPLY=(
+            $(compgen -W "${hosts[*]}" -- "$cur")
+        )
+    fi
+}
+
+complete -F _ssh_ansible_complete ssh
