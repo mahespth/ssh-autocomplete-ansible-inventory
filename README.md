@@ -1,88 +1,160 @@
 # SSH Ansible Inventory Bash Completion
 
+Bash completion for `ssh` using hosts and connection information from an Ansible inventory by Steve Maher.
 
-Bash completion for `ssh` using hostnames from an Ansible inventory, author Steve Maher.
-
-The completion reads the inventory configured by the `ANSIBLE_INVENTORY` environment variable and uses `ansible-inventory --list` to discover available hosts.
-
-To avoid running `ansible-inventory` every time you press `TAB`, discovered hosts are cached locally.
-
-## Features
-
-* Completes SSH hostnames from Ansible inventory
-* Uses the `ANSIBLE_INVENTORY` environment variable
-* Supports static and dynamic Ansible inventories
-* Caches inventory hosts for faster completion
-* Automatically refreshes the cache when inventory files change
-* Configurable cache TTL
-* Supports `user@hostname` completion
-
-Example:
-
-```bash
-ssh web<TAB>
-```
-
-may complete to:
-
-```text
-web01
-web02
-web03
-```
-
-Usernames are also supported:
-
-```bash
-ssh ubuntu@web<TAB>
-```
-
-may complete to:
-
-```text
-ubuntu@web01
-ubuntu@web02
-ubuntu@web03
-```
-
-## Requirements
-
-The following commands must be available:
-
-* Bash
-* Ansible
-* `ansible-inventory`
-* Python 3
-* `sha256sum`
-* `stat`
-
-Check that Ansible inventory works before installing the completion:
+The completion uses the inventory selected by the `ANSIBLE_INVENTORY` environment variable and obtains the resolved inventory using:
 
 ```bash
 ansible-inventory --list
 ```
 
+The results are cached locally so that `ansible-inventory` does not need to run every time `TAB` is pressed.
+
+## Features
+
+* Complete SSH hostnames from Ansible inventory
+* Uses the `ANSIBLE_INVENTORY` environment variable
+* Supports static and dynamic Ansible inventories
+* Caches inventory information for fast completion
+* Automatically refreshes when local inventory files change
+* Configurable cache TTL
+* Supports `user@hostname` completion
+* Completes users for the SSH `-l` option
+* Reads `ansible_user`
+* Reads `ansible_ssh_user`
+* Falls back to `ansible_winrm_user` for Windows inventories
+* Records `ansible_host` and `ansible_connection` for future use
+* Keeps using the previous cache if an inventory refresh temporarily fails
+
+## Example
+
+Given an Ansible inventory containing:
+
+```yaml
+all:
+  hosts:
+    web01:
+      ansible_host: 10.20.1.10
+      ansible_user: ubuntu
+
+    web02:
+      ansible_host: 10.20.1.11
+      ansible_ssh_user: deploy
+
+    win01:
+      ansible_host: 10.20.2.10
+      ansible_connection: winrm
+      ansible_winrm_user: Administrator
+```
+
+typing:
+
+```bash
+ssh web<TAB>
+```
+
+will offer:
+
+```text
+web01
+web02
+```
+
+You can also use normal `user@host` syntax:
+
+```bash
+ssh ubuntu@web<TAB>
+```
+
+which can complete to:
+
+```text
+ubuntu@web01
+ubuntu@web02
+```
+
+The completion also understands SSH's `-l` option.
+
+For example:
+
+```bash
+ssh web01 -l <TAB>
+```
+
+will offer:
+
+```text
+ubuntu
+```
+
+If the host is not yet known:
+
+```bash
+ssh -l <TAB>
+```
+
+the completion displays all unique users discovered in the inventory, for example:
+
+```text
+Administrator
+deploy
+ubuntu
+```
+
+## Requirements
+
+The following are required:
+
+* Bash
+* Ansible
+* `ansible-inventory`
+* Python 3
+* `find`
+* `awk`
+* `grep`
+* `sort`
+
+One of the following SHA-256 utilities must also be available:
+
+* `sha256sum`
+* `shasum`
+* `openssl`
+
+The script supports both GNU and BSD/macOS versions of `stat`.
+
+Before installing the completion, verify that Ansible can read your inventory:
+
+```bash
+ansible-inventory --list
+```
+
+You can also inspect it using:
+
+```bash
+ansible-inventory --graph
+```
+
 ## Installation
 
-Create a directory for Bash completion scripts if one does not already exist:
+Create a directory for personal Bash completion scripts:
 
 ```bash
 mkdir -p ~/.bash_completion.d
 ```
 
-Copy the completion script into it:
+Copy the script into it:
 
 ```bash
 cp ssh-ansible-completion.bash ~/.bash_completion.d/ssh-ansible
 ```
 
-Then load it from your `~/.bashrc`:
+Add the following to `~/.bashrc`:
 
 ```bash
-source ~/.bash_completion.d/ssh-ansible
+source "$HOME/.bash_completion.d/ssh-ansible"
 ```
 
-Reload your shell:
+Reload Bash:
 
 ```bash
 source ~/.bashrc
@@ -90,9 +162,9 @@ source ~/.bashrc
 
 Alternatively, open a new terminal.
 
-## Configure the Ansible Inventory
+## Configure the Inventory
 
-Set the `ANSIBLE_INVENTORY` environment variable to the inventory you want to use.
+Set `ANSIBLE_INVENTORY` to the Ansible inventory you want the completion to use.
 
 For example:
 
@@ -100,43 +172,41 @@ For example:
 export ANSIBLE_INVENTORY="$HOME/git/infra/ansible/inventory/prod"
 ```
 
-You will normally want to add this to your `~/.bashrc`:
+You will normally want to place this in `~/.bashrc`:
 
 ```bash
 export ANSIBLE_INVENTORY="$HOME/git/infra/ansible/inventory/prod"
 ```
 
-Then reload it:
+Reload the shell:
 
 ```bash
 source ~/.bashrc
 ```
 
-The value is passed implicitly to `ansible-inventory`, so the completion uses the same inventory Ansible itself would use.
+Verify the value:
 
-You can verify the inventory with:
+```bash
+echo "$ANSIBLE_INVENTORY"
+```
+
+Then check that Ansible can resolve it:
 
 ```bash
 ansible-inventory --graph
 ```
 
-or:
+## Host Completion
 
-```bash
-ansible-inventory --list
-```
+Type part of an inventory hostname and press `TAB`.
 
-## Usage
-
-Once installed, use SSH normally.
-
-Type part of a hostname and press `TAB`:
+For example:
 
 ```bash
 ssh web<TAB>
 ```
 
-If the inventory contains:
+Given hosts:
 
 ```text
 web01
@@ -154,13 +224,36 @@ web02
 web03
 ```
 
-You can also include the SSH username:
+The inventory hostname is used for completion rather than the value of `ansible_host`.
+
+For example:
+
+```yaml
+web01:
+  ansible_host: 10.20.1.10
+```
+
+is completed as:
+
+```bash
+ssh web01
+```
+
+This allows SSH configuration, DNS, ProxyJump configuration, or other tooling to decide how that inventory name should ultimately be reached.
+
+The resolved `ansible_host` is still stored in the cache and is used when looking up the Ansible user for a host.
+
+## `user@host` Completion
+
+Normal SSH `user@host` syntax is supported.
+
+For example:
 
 ```bash
 ssh ubuntu@web<TAB>
 ```
 
-which will offer:
+can complete to:
 
 ```text
 ubuntu@web01
@@ -168,7 +261,144 @@ ubuntu@web02
 ubuntu@web03
 ```
 
-## Caching
+The username you have already entered is retained.
+
+The script does not currently replace the username in `user@host` syntax with the Ansible-configured username automatically.
+
+For selecting the configured Ansible user, use the `-l` completion described below.
+
+## SSH `-l` User Completion
+
+The SSH `-l` option specifies the login username:
+
+```bash
+ssh -l ubuntu web01
+```
+
+The completion can obtain this username from Ansible inventory variables.
+
+### Host Already Known
+
+If the hostname appears before `-l`:
+
+```bash
+ssh web01 -l <TAB>
+```
+
+and the inventory contains:
+
+```yaml
+web01:
+  ansible_user: ubuntu
+```
+
+the completion will offer:
+
+```text
+ubuntu
+```
+
+It also works when the hostname exists later on the command line:
+
+```bash
+ssh -l <TAB> web01
+```
+
+### Host Not Yet Known
+
+With:
+
+```bash
+ssh -l <TAB>
+```
+
+there is no hostname available to determine which user should be selected.
+
+In this situation the completion returns all unique users discovered in the inventory.
+
+For example:
+
+```text
+Administrator
+deploy
+ubuntu
+```
+
+You can continue typing to filter the results:
+
+```bash
+ssh -l dep<TAB>
+```
+
+which can complete to:
+
+```text
+deploy
+```
+
+## Ansible User Variables
+
+The completion recognises these Ansible variables:
+
+```text
+ansible_ssh_user
+ansible_user
+ansible_winrm_user
+```
+
+For SSH completion, the lookup order is:
+
+```text
+ansible_ssh_user
+ansible_user
+ansible_winrm_user
+```
+
+This means an explicitly configured SSH user takes precedence over the generic Ansible connection user.
+
+For example:
+
+```yaml
+web01:
+  ansible_user: automation
+  ansible_ssh_user: ubuntu
+```
+
+will result in:
+
+```bash
+ssh web01 -l <TAB>
+```
+
+completing to:
+
+```text
+ubuntu
+```
+
+### Windows Hosts
+
+Windows inventories commonly contain:
+
+```yaml
+win01:
+  ansible_connection: winrm
+  ansible_user: Administrator
+```
+
+or:
+
+```yaml
+win01:
+  ansible_connection: winrm
+  ansible_winrm_user: Administrator
+```
+
+Both forms are recognised.
+
+This can also be useful in environments where Windows hosts are normally managed through WinRM but additionally have OpenSSH enabled.
+
+## Cache
 
 Running:
 
@@ -176,25 +406,54 @@ Running:
 ansible-inventory --list
 ```
 
-can be relatively expensive, especially when using dynamic inventory plugins.
+can be relatively expensive, particularly with dynamic inventory plugins.
 
-For that reason, the completion caches the discovered hostnames.
+For this reason the completion caches the resolved inventory information.
 
-By default, the cache is stored under:
+The default cache location is:
 
 ```text
 ~/.cache/ssh-ansible-completion/
 ```
 
-If `XDG_CACHE_HOME` is set, the cache is stored under:
+If `XDG_CACHE_HOME` is configured, the location is:
 
 ```text
 $XDG_CACHE_HOME/ssh-ansible-completion/
 ```
 
-Each value of `ANSIBLE_INVENTORY` gets its own cache file.
+For example:
 
-This means switching between inventories will not overwrite the cached hosts for another inventory.
+```text
+~/.cache/ssh-ansible-completion/
+└── 918fa53b....hosts
+```
+
+Each different value of `ANSIBLE_INVENTORY` receives a separate cache file.
+
+## Cache Contents
+
+The cache is tab-separated and contains four fields:
+
+```text
+inventory_hostname    ansible_host    ansible_user    ansible_connection
+```
+
+For example:
+
+```text
+web01    10.20.1.10    ubuntu         ssh
+web02    10.20.1.11    deploy         ssh
+win01    10.20.2.10    Administrator  winrm
+```
+
+This information is generated from the resolved output of:
+
+```bash
+ansible-inventory --list
+```
+
+The cache is an implementation detail and does not normally need to be edited manually.
 
 ## Cache Lifetime
 
@@ -206,21 +465,31 @@ The default cache lifetime is:
 
 or five minutes.
 
-You can change this using the `SSH_ANSIBLE_CACHE_TTL` environment variable.
+Configure it using:
 
-For example, to refresh every minute:
+```bash
+SSH_ANSIBLE_CACHE_TTL
+```
+
+For example, refresh at most once every minute:
 
 ```bash
 export SSH_ANSIBLE_CACHE_TTL=60
 ```
 
-To cache for one hour:
+Refresh at most once every hour:
 
 ```bash
 export SSH_ANSIBLE_CACHE_TTL=3600
 ```
 
-You can add this setting to your `~/.bashrc`:
+A value of zero causes the inventory to be refreshed whenever completion requires it:
+
+```bash
+export SSH_ANSIBLE_CACHE_TTL=0
+```
+
+A typical setting is:
 
 ```bash
 export SSH_ANSIBLE_CACHE_TTL=300
@@ -228,193 +497,358 @@ export SSH_ANSIBLE_CACHE_TTL=300
 
 ## Inventory Change Detection
 
-The completion does not rely only on the cache TTL.
+The completion does not rely solely on the cache TTL.
 
-If a local inventory source is newer than the cache file, the host cache is refreshed automatically.
+When `ANSIBLE_INVENTORY` points to local files, the cache is refreshed if an inventory file is newer than the cache.
 
-For example, after editing:
-
-```text
-inventory/prod/hosts.yml
-```
-
-the next SSH completion will regenerate the cache.
-
-The TTL is still useful for dynamic inventory sources where the remote inventory may change even when the local inventory configuration does not.
-
-## Clear the Cache
-
-To force the inventory to be rebuilt on the next completion, remove the cache:
-
-```bash
-rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/ssh-ansible-completion"
-```
-
-Then type:
-
-```bash
-ssh <TAB>
-```
-
-The completion will run `ansible-inventory` and create a new cache.
-
-## Multiple Inventories
-
-`ANSIBLE_INVENTORY` can point to different inventories depending on your current environment.
-
-For example:
-
-```bash
-export ANSIBLE_INVENTORY="$HOME/ansible/inventory/dev"
-```
-
-or:
-
-```bash
-export ANSIBLE_INVENTORY="$HOME/ansible/inventory/prod"
-```
-
-The completion creates a different cache entry for each inventory value.
-
-You can therefore switch inventories without manually clearing the cache.
-
-For example:
-
-```bash
-export ANSIBLE_INVENTORY="$HOME/ansible/inventory/dev"
-ssh web<TAB>
-```
-
-then:
-
-```bash
-export ANSIBLE_INVENTORY="$HOME/ansible/inventory/prod"
-ssh web<TAB>
-```
-
-Each inventory will use its own cached host list.
-
-## Testing
-
-Check that the environment variable is set:
-
-```bash
-echo "$ANSIBLE_INVENTORY"
-```
-
-Check that Ansible can read it:
-
-```bash
-ansible-inventory --graph
-```
-
-Check the hosts returned by the completion directly:
-
-```bash
-_ssh_ansible_hosts
-```
-
-You should see one hostname per line.
+For inventory directories, files below the directory are checked recursively.
 
 For example:
 
 ```text
-db01
-db02
-redis01
-web01
-web02
-web03
+inventory/
+└── prod/
+    ├── hosts.yml
+    ├── group_vars/
+    │   └── all.yml
+    └── host_vars/
+        └── web01.yml
 ```
 
-Then try Bash completion:
+Changing any of these files will cause the inventory cache to be rebuilt on the next completion.
 
-```bash
-ssh web<TAB>
-```
+The TTL remains useful for dynamic inventories because their remote data can change without any local inventory file changing.
 
-## Troubleshooting
+## Dynamic Inventory
 
-### No hosts are returned
+Dynamic inventory plugins are supported because the completion does not parse inventory files directly.
 
-Check that `ANSIBLE_INVENTORY` is set:
-
-```bash
-echo "$ANSIBLE_INVENTORY"
-```
-
-Then verify that Ansible can load the inventory:
+Instead it uses:
 
 ```bash
 ansible-inventory --list
 ```
 
-If that command fails, the completion will not be able to discover hosts.
+This means AWS, Azure, VMware, custom inventory plugins, and other inventory sources can be used as long as `ansible-inventory` can resolve them normally.
 
-### Completion does not run
+For dynamic inventories, consider using a shorter cache TTL.
 
-Check that the completion file has been sourced:
-
-```bash
-type _ssh_ansible_complete
-```
-
-You should see that `_ssh_ansible_complete` is a shell function.
-
-You can manually load it with:
-
-```bash
-source ~/.bash_completion.d/ssh-ansible
-```
-
-### Inventory changes are not appearing
-
-Remove the cache:
-
-```bash
-rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/ssh-ansible-completion"
-```
-
-Alternatively, reduce the cache TTL:
-
-```bash
-export SSH_ANSIBLE_CACHE_TTL=30
-```
-
-### Dynamic inventory is stale
-
-Dynamic inventories may change without the local inventory configuration file changing.
-
-Use a shorter TTL for these environments:
+For example:
 
 ```bash
 export SSH_ANSIBLE_CACHE_TTL=60
 ```
 
-### Existing SSH completion disappeared
+## Refresh Failure Behaviour
 
-The completion currently registers itself with:
+If the cache has expired and:
+
+```bash
+ansible-inventory --list
+```
+
+temporarily fails, the completion will continue using an existing cache if one is available.
+
+For example, this can be useful if:
+
+* a dynamic inventory API is temporarily unavailable
+* VPN connectivity has dropped
+* cloud credentials need refreshing
+* DNS is temporarily unavailable
+
+If no previous cache exists and inventory generation fails, no Ansible completions will be returned.
+
+## Multiple Inventories
+
+Different values of `ANSIBLE_INVENTORY` use different cache files.
+
+For example:
+
+```bash
+export ANSIBLE_INVENTORY="$HOME/ansible/inventory/dev"
+```
+
+then:
+
+```bash
+ssh web<TAB>
+```
+
+uses the development inventory.
+
+Switching to:
+
+```bash
+export ANSIBLE_INVENTORY="$HOME/ansible/inventory/prod"
+```
+
+causes completion to use a separate production cache.
+
+You do not need to manually clear the cache when switching inventories.
+
+## Testing
+
+Check that the environment variable is configured:
+
+```bash
+echo "$ANSIBLE_INVENTORY"
+```
+
+Check the raw inventory:
+
+```bash
+ansible-inventory --list
+```
+
+Check the inventory graph:
+
+```bash
+ansible-inventory --graph
+```
+
+Check the hostnames returned by the completion:
+
+```bash
+_ssh_ansible_hosts
+```
+
+Example:
+
+```text
+db01
+db02
+web01
+web02
+win01
+```
+
+Check the users discovered by the completion:
+
+```bash
+_ssh_ansible_users
+```
+
+Example:
+
+```text
+Administrator
+deploy
+ubuntu
+```
+
+Check the configured user for a specific host:
+
+```bash
+_ssh_ansible_user_for_host web01
+```
+
+Example:
+
+```text
+ubuntu
+```
+
+The lookup also accepts the resolved `ansible_host`:
+
+```bash
+_ssh_ansible_user_for_host 10.20.1.10
+```
+
+Example:
+
+```text
+ubuntu
+```
+
+## Inspecting the Cache
+
+Find the current cache file with:
+
+```bash
+_ssh_ansible_cache_file
+```
+
+For example:
+
+```text
+/home/user/.cache/ssh-ansible-completion/918fa53b....hosts
+```
+
+Inspect it with:
+
+```bash
+cat "$(_ssh_ansible_cache_file)"
+```
+
+or, for easier viewing:
+
+```bash
+column -s $'\t' -t "$(_ssh_ansible_cache_file)"
+```
+
+Example:
+
+```text
+web01  10.20.1.10  ubuntu         ssh
+web02  10.20.1.11  deploy         ssh
+win01  10.20.2.10  Administrator  winrm
+```
+
+## Clearing the Cache
+
+Remove all cached inventories:
+
+```bash
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/ssh-ansible-completion"
+```
+
+The next completion will rebuild the cache.
+
+To refresh only the currently selected inventory:
+
+```bash
+rm -f "$(_ssh_ansible_cache_file)"
+```
+
+Then trigger completion:
+
+```bash
+ssh <TAB>
+```
+
+## Troubleshooting
+
+### No Hosts Are Returned
+
+Check:
+
+```bash
+echo "$ANSIBLE_INVENTORY"
+```
+
+Then verify Ansible itself can load the inventory:
+
+```bash
+ansible-inventory --list
+```
+
+Finally test:
+
+```bash
+_ssh_ansible_hosts
+```
+
+### No Users Are Returned
+
+Inspect the resolved Ansible host variables:
+
+```bash
+ansible-inventory --list
+```
+
+Look for one of:
+
+```text
+ansible_user
+ansible_ssh_user
+ansible_winrm_user
+```
+
+You can also test:
+
+```bash
+_ssh_ansible_users
+```
+
+and:
+
+```bash
+_ssh_ansible_user_for_host web01
+```
+
+### Completion Is Not Loaded
+
+Check:
+
+```bash
+type _ssh_ansible_complete
+```
+
+You should see:
+
+```text
+_ssh_ansible_complete is a function
+```
+
+If not, load the script manually:
+
+```bash
+source ~/.bash_completion.d/ssh-ansible
+```
+
+### Inventory Changes Are Not Appearing
+
+Force a cache refresh:
+
+```bash
+rm -f "$(_ssh_ansible_cache_file)"
+```
+
+Alternatively reduce the TTL:
+
+```bash
+export SSH_ANSIBLE_CACHE_TTL=30
+```
+
+### Dynamic Inventory Is Stale
+
+Dynamic inventory can change without any local file changing.
+
+Reduce the cache TTL:
+
+```bash
+export SSH_ANSIBLE_CACHE_TTL=60
+```
+
+### Inventory Refresh Is Failing
+
+Run:
+
+```bash
+ansible-inventory --list
+```
+
+directly.
+
+The completion deliberately hides errors from this command because printing errors while Bash is attempting completion would interfere with the shell prompt.
+
+Running the command manually will show the actual Ansible error.
+
+## Existing Bash SSH Completion
+
+The script registers itself using:
 
 ```bash
 complete -F _ssh_ansible_complete ssh
 ```
 
-This replaces the existing Bash completion function for `ssh`.
+This replaces any existing Bash programmable completion registered for `ssh`.
 
-If your system's `bash-completion` package already provides SSH completion, features such as completion from:
+As a result, completion supplied by the standard `bash-completion` package for things such as SSH options, `~/.ssh/config`, and `known_hosts` may no longer be available.
+
+The Ansible completion currently focuses on:
 
 ```text
-~/.ssh/config
-~/.ssh/known_hosts
+ssh HOST
+ssh USER@HOST
+ssh -l USER HOST
 ```
 
-or completion of some SSH options may no longer be available.
+A future enhancement could integrate the Ansible host list into the standard Bash `_ssh` completion rather than replacing it.
 
-A future version could extend the system `_ssh` completion function instead of replacing it, allowing Ansible inventory hosts and standard SSH completion to work together.
+## Suggested `.bashrc`
 
-## Suggested `.bashrc` Configuration
-
-A typical configuration might look like:
+A typical configuration is:
 
 ```bash
 export ANSIBLE_INVENTORY="$HOME/git/infra/ansible/inventory/prod"
@@ -423,9 +857,15 @@ export SSH_ANSIBLE_CACHE_TTL=300
 source "$HOME/.bash_completion.d/ssh-ansible"
 ```
 
+Reload it with:
+
+```bash
+source ~/.bashrc
+```
+
 ## Uninstall
 
-Remove the completion script:
+Remove the completion:
 
 ```bash
 rm ~/.bash_completion.d/ssh-ansible
@@ -437,9 +877,15 @@ Remove the cache:
 rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/ssh-ansible-completion"
 ```
 
-Then remove the corresponding `source` line and environment variables from your `~/.bashrc`.
+Remove the corresponding configuration from `~/.bashrc`:
 
-Open a new terminal or reload Bash:
+```bash
+export ANSIBLE_INVENTORY=...
+export SSH_ANSIBLE_CACHE_TTL=...
+source "$HOME/.bash_completion.d/ssh-ansible"
+```
+
+Then open a new terminal or reload Bash:
 
 ```bash
 source ~/.bashrc
@@ -447,4 +893,4 @@ source ~/.bashrc
 
 ## License
 
-Use and modify as required for your environment.
+Use, modify, and redistribute as appropriate for your environment.
